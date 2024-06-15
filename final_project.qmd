@@ -70,11 +70,8 @@ Let's start with the summary statistics and correlation matrix.
 
 **Correlation Matrix:** The correlation matrix shows the linear relationships between pairs of variables. Key observations include: - **Gravity** and **Osmolarity** have a strong positive correlation (0.86). - **Gravity** and **Urea** also show a strong positive correlation (0.82). - **Calcium** and **Target** have a moderate positive correlation (0.54), indicating that higher calcium concentration may be associated with the presence of kidney stones.
 
-Next, let's visualize the data to explore these relationships further. We'll create scatter plots and histograms for each variable to understand their distributions and potential relationships with the target variable.
+# Appendix
 
-Would you like to proceed with visualizations for a more detailed exploration? If so, any specific visualizations you'd prefer to start with?
-
-Sure! Below is an outline of the steps needed for data wrangling, pre-processing, and modeling in R. I'll provide you with some sample R code snippets for each step to help you get started.
 
 ### 1. Load Libraries and Data
 
@@ -207,16 +204,6 @@ roc_curve <- roc(test_data$target, as.numeric(final_preds))
 plot(roc_curve)
 ```
 
-### 7. Discussion and Conclusion
 
-Write up your findings and include the necessary visualizations and tables in your report. Follow the APA 7 style guidelines.
 
-### 8. Appendix
 
-Include your R code in the appendix for reproducibility.
-
-### Executive Summary PowerPoint
-
-Create a concise presentation summarizing your project, focusing on the problem statement, methodology, key findings, and conclusions.
-
-This outline and the sample code should help you get started on your project in R. If you need any specific help or have further questions, feel free to ask!
