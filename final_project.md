@@ -11,11 +11,28 @@ Spring 2024
 ```
 
 
-### 1. Problem Statement and Justification
+## Problem Statement and Justification
 
 To predict the presence of kidney stones based on urine analysis data, focusing on six physical characteristics of urine.
 
 Understanding the relationship between urine characteristics and kidney stone formation can help in early detection and prevention, leading to better patient outcomes.
+
+## Dataset
+
+The data is obtained from [Physical Characteristics of Urines With and Without Crystals](https://link.springer.com/chapter/10.1007/978-1-4612-5098-2_45), a chapter from Springer Series in Statistics. 
+
+The 79 urine specimens, were analyzed in an effort to determine if certain physical characteristics of the urine might be related to the formation of calcium oxalate crystals. The six physical characteristics of the urine are:
+1. **specific gravity**: the density of the urine relative to water
+2. **pH**: the negative logarithm of the hydrogen ion
+3. **osmolarity (mOsm)**: a unit used in biology and medicine but not in physical chemistry. Osmolarity is proportional to the concentration of molecules in solution
+4. **conductivity (mMho milliMho)**: One Mho is one reciprocal Ohm. Conductivity is proportional to the concentration of charged ions in solution
+5. **urea**: concentration in millimoles per litre
+6. **calcium**: concentration (CALC) in millimolesllitre.
+
+
+
+
+
 
 ### 2. Exploratory Data Analysis (EDA)
 
