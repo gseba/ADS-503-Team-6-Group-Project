@@ -45,7 +45,6 @@ Understanding the relationship between urine characteristics and kidney stone fo
 
 ### Technical Report
 
-Follow APA 7 style for writing the technical report. Organize it with the above sections, ensuring clarity and thorough discussion.
 
 ### Executive Summary PowerPoint
 
@@ -60,9 +59,6 @@ Follow APA 7 style for writing the technical report. Organize it with the above 
 -   Create a narrated presentation explaining the project's objectives, methodology, results, and conclusions.
 -   Ensure good sound quality and equal participation from all team members.
 
-To get started, let's conduct an initial exploratory data analysis (EDA) on the provided dataset. We'll begin with graphical and non-graphical representations of the data.
-
-Let's start with the summary statistics and correlation matrix.
 
 ### Summary Statistics and Correlation Analysis
 
