@@ -1,3 +1,16 @@
+# Kidney Stone Prediction based on Urine Analysis
+
+```
+Carlos Fuentes Rosa
+Ghassan Seba
+Muris Saab
+
+Universtity of San Diego
+ADS-503 Final Project
+Spring 2024
+```
+
+
 ### 1. Problem Statement and Justification
 
 To predict the presence of kidney stones based on urine analysis data, focusing on six physical characteristics of urine.
