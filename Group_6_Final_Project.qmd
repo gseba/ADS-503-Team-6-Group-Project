@@ -1,0 +1,286 @@
+---
+title: "Group 6 Final Project"
+author: "Muris Saab, Ghassan Seba"
+format: html
+editor: visual
+---
+
+## Kidney Stone Prediction based on Urine Analysis
+
+### Import Packages
+
+```{r}
+suppressPackageStartupMessages({
+library(caret)
+library(AppliedPredictiveModeling)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(gridExtra)
+library(skimr)
+library(outliers)
+library(gridExtra)
+library(reshape2)
+library(corrplot)
+
+})
+```
+
+### Read in CSV File
+
+```{r}
+# Read CSV into data frame
+kidney_data <- read.csv("kindey_stone_urine_analysis.csv")
+```
+
+## Exploratory Data Analysis (EDA)
+
+### Initial Inspection
+
+```{r}
+# Check first & last five rows and dimensions of data frame
+dim(kidney_data)
+head(kidney_data)
+tail(kidney_data)
+```
+
+```{r}
+# Identify data types
+str(kidney_data)
+```
+
+### Data Cleaning & Univariate Analysis
+
+```{r}
+# Check for missing values
+missing_data <- sum(is.na(kidney_data))
+missing_data
+```
+
+#### Create Boxplots
+
+```{r}
+suppressWarnings({
+# Define a function to create boxplots with mean points
+create_boxplot <- function(data, y_var, title, ylab) {
+  mean_val <- mean(data[[y_var]], na.rm = TRUE)
+  
+  plot <- ggplot(data = data, aes_string(y = y_var)) + 
+    geom_boxplot(outlier.color = "red", fill = "lightblue") + 
+    scale_x_discrete() +
+    labs(title = title, y = ylab) + 
+    coord_flip() + 
+    geom_point(aes(x = 0, y = mean_val),  
+               shape = 16,                       
+               size = 2,                         
+               color = "blue") +
+    theme(plot.title = element_text(hjust = 0.5, size = 12))
+  
+  return(plot)
+}
+
+# Create boxplots for each variable
+plot1 <- create_boxplot(kidney_data, "gravity", "Urine Specific Gravity", "Gravity")
+plot2 <- create_boxplot(kidney_data, "ph", "Urine pH", "pH")
+plot3 <- create_boxplot(kidney_data, "osmo", "Urine Osmolarity (mOsm/L)", "Osmo")
+plot4 <- create_boxplot(kidney_data, "cond", "Urine Conductivity (mMho)", "Cond")
+plot5 <- create_boxplot(kidney_data, "urea", "Urine Urea Concentration (mmol/L)", "Urea")
+plot6 <- create_boxplot(kidney_data, "calc", "Urine Calcium Concentration (mmol/L)", "Calc")
+
+# Arrange boxplots in a 3x2 matrix
+grid.arrange(
+  arrangeGrob(plot1, plot2, ncol = 2), 
+  arrangeGrob(plot3, plot4, ncol = 2), 
+  arrangeGrob(plot5, plot6, ncol = 2), 
+  ncol = 1
+)
+})
+```
+
+#### Further investigate Outliers
+
+```{r}
+# Grubbs' test for single outlier
+grubbs_test_ph <- grubbs.test(kidney_data$ph, type = 10)
+grubbs_test_calc <- grubbs.test(kidney_data$calc, type = 10)
+
+# Print Grubbs' test results
+cat("Grubbs' test for ph:\n")
+print(grubbs_test_ph)
+
+cat("Grubbs' test for calc:\n")
+print(grubbs_test_calc)
+
+```
+
+The Grubbs' test was used to identify potential outliers in the kidney data, specifically focusing on the highest values for pH and calcium concentration.
+
+-   **pH:** The test suggests that the highest pH value (7.94) is likely **not a true outlier**. The p-value (0.28) is relatively high, meaning it's fairly common to observe such a value if it actually belongs to the same population as the other pH measurements.
+
+-   **Calcium Concentration:** The test provides weak evidence for the highest value (14.34) being a potential outlier. The p-value (0.05) is lower than for pH, but it might not be statistically significant depending on the chosen threshold (commonly 0.05). This suggests there's a **chance** this value could be an outlier, but more evidence is needed for a definitive conclusion. Factors like a larger sample size or additional investigation could help clarify this.
+
+In simpler terms, the tests don't definitively prove whether the values are true outliers, but they assess the likelihood of them being outliers based on their extremeness compared to the rest of the data. The results suggest the high pH value is likely not an outlier, while the high calcium concentration might be one, but more evidence is needed for confirmation.
+
+```{r}
+# Function to calculate z-scores for a vector
+calculate_z_scores <- function(x) { (x - mean(x)) / sd(x)}
+
+# Set the z-score threshold for outlier detection
+z_score_threshold <- 2.5
+
+# Calculate z-scores for pH & calc
+ph_z_scores <- calculate_z_scores(kidney_data$ph)
+calc_z_scores <- calculate_z_scores(kidney_data$calc)
+
+
+# Identify outliers based on z-scores
+ph_outliers <- kidney_data %>%
+  filter(abs(ph_z_scores) > z_score_threshold) %>%
+  select(ph)
+
+calc_outliers <- kidney_data %>%
+  filter(abs(calc_z_scores) > z_score_threshold) %>%
+  select(calc)
+
+# Print the outliers
+#print(ph_outliers)
+#print(calc_outliers)
+
+# Function to apply Dixon's Q test if sample size is between 3 and 30
+apply_dixons_q_test <- function(data, column_name) {
+  column_data <- data[[column_name]]
+  sample_size <- length(column_data)
+  
+  if (sample_size >= 3 && sample_size <= 30) {
+    result <- dixon.test(column_data, opposite = TRUE)
+    return(result)
+  } else {
+    return(paste("Sample size for", column_name, "is", sample_size, "which is outside the range of 3-30"))
+  }
+}
+
+# Perform Dixon's Q test on pH outliers
+ph_test_results <- apply_dixons_q_test(ph_outliers, "ph")
+cat("Dixon's Q Test for pH Outliers:\n")
+print(ph_test_results)
+
+# Perform Dixon's Q test on calc outliers
+calc_test_results <- apply_dixons_q_test(calc_outliers, "calc")
+cat("Dixon's Q Test for Calc Outliers:\n")
+print(calc_test_results)
+
+```
+
+**Dixon's Q Test (for identified z-score outliers):**
+
+This test was applied only to the potential outliers identified by z-scores (assuming they were true outliers). It assesses how extreme these potential outliers are compared to their nearest neighbors within the subset of potential outliers.
+
+-   **pH:** The Dixon's Q test result (p-value = 1) suggests that the potential outlier identified by z-scores (lowest value, 7.9) is likely **not a true outlier**. There's a high probability it originates from the same population as the other pH measurements.
+
+-   **Calcium Concentration:** The test result (p-value = 0.3487) provides weak evidence for the potential outlier identified by z-scores (lowest value, 12.68) being a true outlier. The p-value is not statistically significant at common thresholds (e.g., 0.05). There's a chance it could be an outlier, but more evidence is needed.
+
+**Overall:**
+
+While z-scores identified potential outliers in calcium concentration, further analysis using Dixon's Q test suggests these might not be true outliers. The pH measurements seem to have no outliers based on both methods. It's important to consider the limitations of these methods, especially sample size requirements for Dixon's Q test.
+
+#### Create Histograms to Investigate Distributions Further
+
+```{r}
+# Define a function to create histograms with mean and median lines
+create_histogram <- function(data, x_var, title, xlab) {
+  mean_val <- mean(data[[x_var]], na.rm = TRUE)
+  median_val <- median(data[[x_var]], na.rm = TRUE)
+  
+  hist <- ggplot(data = data, aes_string(x = x_var)) +
+    geom_histogram(bins = 20, color = "black", fill = "lightblue") +  
+    geom_vline(xintercept = mean_val, color = "red", linetype = "solid", linewidth = 1) +
+    geom_vline(xintercept = median_val, color = "blue", linetype = "solid", linewidth = 1) +
+    labs(title = title, x = xlab) +
+    theme(plot.title = element_text(hjust = 0.5, size = 12))
+  
+  return(hist)
+}
+
+# Create histograms for each variable
+hist1 <- create_histogram(kidney_data, "gravity", "Urine Specific Gravity", "Gravity")
+hist2 <- create_histogram(kidney_data, "ph", "Urine pH", "pH")
+hist3 <- create_histogram(kidney_data, "osmo", "Urine Osmolarity (mOsm/L)", "Osmo")
+hist4 <- create_histogram(kidney_data, "cond", "Urine Conductivity (mMho)", "Cond")
+hist5 <- create_histogram(kidney_data, "urea", "Urine Urea", "Urea")
+hist6 <- create_histogram(kidney_data, "calc", "Urine Calcium", "Calc")
+
+# Arrange histograms in a 3x2 matrix
+grid.arrange(
+  arrangeGrob(hist1, hist2, ncol = 2),
+  arrangeGrob(hist3, hist4, ncol = 2),
+  arrangeGrob(hist5, hist6, ncol = 2),
+  ncol = 1
+)
+```
+
+```{r}
+# Summary Statistics 
+skim(kidney_data)
+```
+
+### Scatter plots - Predictor Relationships
+
+```{r}
+# Define the predictor variables
+kidney_predictor_vars <- c("gravity", "ph", "osmo", "cond", "urea", "calc")
+
+# Subset the kidney_data dataframe using the predictor variables
+kidney_predictor_data = kidney_data[kidney_predictor_vars]
+
+# Run grid of pairwise scatter plots for preditor variables
+pairs(kidney_predictor_data)
+```
+
+### Correlation Matirx - Predictor Relationships
+
+```{r}
+# Calculate correlations for predictor variables:
+kidney_correlations <- cor(kidney_predictor_data)
+
+# Plot the correlation matrix for kidney data
+corrplot(kidney_correlations, method = 'color', order = 'hclust', addCoef.col = 'black', tl.pos = 'd', cl.pos = 'r', col = COL2('PRGn'), outline=TRUE)
+
+```
+
+### Predictor Variable Correlation with Target Variable
+
+```{r}
+# Calculate correlation matrix
+cor_matrix <- cor(kidney_data)
+
+# Extract correlations with the target variable
+cor_with_target <- cor_matrix[, "target"]
+
+# Create data frame for plotting
+cor_df <- data.frame(Variable = rownames(cor_matrix), Correlation = cor_with_target)
+
+# Remove the row corresponding to 'target'
+cor_df <- cor_df[cor_df$Variable != "target", ]
+
+# Plot correlation values with the target variable using a bar plot
+ggplot(cor_df, aes(x = reorder(Variable, -Correlation), y = Correlation)) +
+  geom_bar(stat = "identity", fill = "dodgerblue") +
+  coord_flip() +
+  labs(title = "Correlation with the Target Variable",
+       x = "Predictor Variable",
+       y = "Correlation") +
+  theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, size = 14))
+  
+```
+
+### Covariance Matrix - Predictor/Response Relationships
+
+```{r}
+# Calculate covariance matrix
+cov_matrix <- cov(kidney_data)
+
+# Print covariance matrix with rounded values
+print(round(cov_matrix, digits = 2))
+
+```
