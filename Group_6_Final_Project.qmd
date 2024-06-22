@@ -22,6 +22,9 @@ library(outliers)
 library(gridExtra)
 library(reshape2)
 library(corrplot)
+library(stats)
+library(car)
+library(randomForest)
 
 })
 ```
@@ -236,7 +239,7 @@ kidney_predictor_data = kidney_data[kidney_predictor_vars]
 pairs(kidney_predictor_data)
 ```
 
-### Correlation Matirx - Predictor Relationships
+### Correlation Matrix - Predictor Relationships
 
 ```{r}
 # Calculate correlations for predictor variables:
@@ -245,6 +248,13 @@ kidney_correlations <- cor(kidney_predictor_data)
 # Plot the correlation matrix for kidney data
 corrplot(kidney_correlations, method = 'color', order = 'hclust', addCoef.col = 'black', tl.pos = 'd', cl.pos = 'r', col = COL2('PRGn'), outline=TRUE)
 
+# Round the correlation matrix for better readability
+rounded_correlations <- round(kidney_correlations, 2)
+
+# Convert the matrix to a data frame 
+df_correlations <- as.data.frame(rounded_correlations)
+
+df_correlations
 ```
 
 ### Predictor Variable Correlation with Target Variable
@@ -261,6 +271,8 @@ cor_df <- data.frame(Variable = rownames(cor_matrix), Correlation = cor_with_tar
 
 # Remove the row corresponding to 'target'
 cor_df <- cor_df[cor_df$Variable != "target", ]
+
+print(cor_df)
 
 # Plot correlation values with the target variable using a bar plot
 ggplot(cor_df, aes(x = reorder(Variable, -Correlation), y = Correlation)) +
@@ -284,3 +296,442 @@ cov_matrix <- cov(kidney_data)
 print(round(cov_matrix, digits = 2))
 
 ```
+
+## Feature Engineering Based Using EDA Findings
+
+#### Polynomial Features - Features that did not show strong linear relationship with target
+
+```{r}
+# Copy the original dataframe
+kidney_data_expand <- kidney_data
+
+# Add polynomial features to the new dataframe
+kidney_data_expand$ph_squared <- kidney_data_expand$ph^2
+kidney_data_expand$ph_cubed <- kidney_data_expand$ph^3
+
+kidney_data_expand$cond_squared <- kidney_data_expand$cond^2
+kidney_data_expand$cond_cubed <- kidney_data_expand$cond^3
+
+# Display new dataframe 
+head(kidney_data_expand)
+
+```
+
+In our kidney data analysis, feature engineering through polynomial features is a necessary step to capture complex relationships between the variables and the target variable, especially given the weak linear correlations observed in our preliminary data exploration. Here's a detailed explanation tailored specifically to our dataset:
+
+1.  **Capturing Non-linear Relationships**: The correlations between our variables, such as pH and conductivity, and the target are notably weak. For instance, pH has a negative correlation of -0.11219117, indicating only a slight inverse linear relationship with the target. However, the relationship between pH and kidney health can be non-linear, as pH levels might affect the body differently at different concentrations. By creating polynomial features like `ph_squared` and `ph_cubed`, we allow our model to consider these non-linear effects, potentially capturing a threshold effect or a more complex dependency which might not be evident through linear analysis alone.
+
+2.  **Enhancing Predictive Accuracy**: Our dataset includes variables like conductivity, which has a very low correlation (0.05971726) with the target. Squaring or cubing these features provides a more nuanced view of how they influence the target variable, possibly revealing hidden patterns that a simple linear model might miss. For instance, the effect of conductivity on the target might increase exponentially after a certain threshold, a relationship better modeled by polynomial features. By including these transformed features, our model can make more accurate predictions, particularly in a complex domain like medical diagnostics where interactions between variables are common.
+
+3.  **Domain-specific Relevance**: In the context of predicting kidney health issues such as the formation of calcium oxalate crystals, understanding the nuanced effects of each variable is crucial. For example, the relationship between calcium concentration and kidney health is particularly critical. Calcium showed a relatively higher correlation (0.53772808) with the target, suggesting it has a more direct relationship. However, modeling its interaction with other variables like pH or urea through polynomial features could provide deeper insights into how combinations of these factors influence kidney health. Given the medical importance of accurately predicting health outcomes, these polynomial transformations are not just statistically beneficial but could be clinically significant.
+
+#### Aggregate Features - Based on Biological Relevance
+
+```{r}
+# Normalize features in the expanded dataset
+kidney_data_expand$norm_osmo <- scale(kidney_data_expand$osmo, center = TRUE, scale = TRUE)
+kidney_data_expand$norm_cond <- scale(kidney_data_expand$cond, center = TRUE, scale = TRUE)
+kidney_data_expand$norm_calc <- scale(kidney_data_expand$calc, center = TRUE, scale = TRUE)
+kidney_data_expand$norm_ph <- scale(kidney_data_expand$ph, center = TRUE, scale = TRUE)
+
+# Calculate mean aggregates
+kidney_data_expand$mean_agg_osmo_cond <- rowMeans(kidney_data_expand[, c("norm_osmo", "norm_cond")], na.rm = TRUE)
+kidney_data_expand$mean_agg_calc_ph <- rowMeans(kidney_data_expand[, c("norm_calc", "norm_ph")], na.rm = TRUE)
+
+# Calculate max aggregates
+kidney_data_expand$max_agg_osmo_cond <- pmax(kidney_data_expand$norm_osmo, kidney_data_expand$norm_cond, na.rm = TRUE)
+kidney_data_expand$max_agg_calc_ph <- pmax(kidney_data_expand$norm_calc, kidney_data_expand$norm_ph, na.rm = TRUE)
+
+# List of normalized features to remove
+norm_features <- c("norm_osmo", "norm_cond", "norm_calc", "norm_ph")
+
+# Remove the normalized features from the dataframe
+kidney_data_expand <- kidney_data_expand[, !(names(kidney_data_expand) %in% norm_features)]
+
+# Display the modified dataframe 
+head(kidney_data_expand)
+
+```
+
+Since `osmolarity` and `conductivity` are both related to the concentration of molecules and ions in the solution, these features might interact in ways that affect the formation of crystals. An aggregate measure of these two could provide insight into the overall ionic activity of the urine.
+
+Since pH can affect the solubility of calcium compounds (and thus potentially influence the formation of calcium oxalate crystals), considering an interaction term between `calc` and `ph` might be informative.
+
+#### Ratio Features - Based on Biological Relevance
+
+```{r}
+# Normalize urea and calcium in the expanded dataset
+kidney_data_expand$norm_urea <- scale(kidney_data_expand$urea, center = TRUE, scale = TRUE)
+kidney_data_expand$norm_calc <- scale(kidney_data_expand$calc, center = TRUE, scale = TRUE)
+kidney_data_expand$norm_osmo <- scale(kidney_data_expand$osmo, center = TRUE, scale = TRUE)
+kidney_data_expand$norm_cond <- scale(kidney_data_expand$cond, center = TRUE, scale = TRUE)
+
+# Calculate the normalized ratio of calcium to urea
+kidney_data_expand$calc_to_urea_ratio <- kidney_data_expand$norm_calc / kidney_data_expand$norm_urea
+
+# Calculate the normalized ratio of Osmolarity to Conductivity 
+kidney_data_expand$osmo_to_cond_ratio <- kidney_data_expand$norm_osmo / kidney_data_expand$norm_cond
+
+# List of normalized features to remove
+norm_features <- c("norm_urea", "norm_calc", "norm_osmo", "norm_cond")
+
+# Remove the normalized features from the dataframe
+kidney_data_expand <- kidney_data_expand[, !(names(kidney_data_expand) %in% norm_features)]
+
+# View the first few rows to verify the new columns
+head(kidney_data_expand)
+```
+
+### 1. **Calcium to Urea Ratio**
+
+**Why It's Potentially Beneficial:**
+
+-   **Biological Interplay**: Calcium and urea in the urine are crucial indicators of various metabolic and physiological processes. Calcium levels are directly relevant to kidney stone formation, particularly calcium oxalate stones, which are among the most common types. Urea concentration reflects the kidney's function in excreting waste products derived from protein metabolism.
+
+-   **Predictive of Crystal Formation**: The balance between calcium and urea may influence the supersaturation and, consequently, the precipitation of calcium oxalate crystals. A higher ratio might indicate a relatively higher concentration of calcium compared to urea, potentially leading to a greater propensity for crystal formation.
+
+-   **Normalization of Concentrations**: Ratios normalize the concentrations against each other, adjusting for variations in urine concentration across samples. This can be particularly useful in studies where urine dilution varies significantly among samples.
+
+### 2. **Osmolarity to Conductivity Ratio**
+
+**Why It's Potentially Beneficial:**
+
+-   **Reflects Ionic Balance**: Osmolarity measures the total concentration of solute particles in solution, while conductivity measures the concentration of ions that contribute to the solution's ability to conduct electricity. The ratio of osmolarity to conductivity provides insight into the balance between total solutes and those that are ionic---key for understanding the chemical environment conducive to stone formation.
+
+-   **Indicator of Non-Ionic Solutes**: This ratio can help distinguish between solute contributions from ionic and non-ionic compounds. For example, a high osmolarity with relatively low conductivity could suggest a higher proportion of non-ionic substances like urea or glucose in the urine.
+
+-   **Diagnostic Utility**: Such a ratio might help in diagnosing and understanding conditions like renal tubular acidosis, where the ability of the kidneys to manage acid-base balance (often reflected in ionic changes) is impaired.
+
+## Explore and Evaluate New Features
+
+```{r}
+suppressWarnings({
+# Define a function to create boxplots with mean points
+create_boxplot <- function(data, y_var, title, ylab) {
+  mean_val <- mean(data[[y_var]], na.rm = TRUE)
+  
+  plot <- ggplot(data = data, aes_string(y = y_var)) + 
+    geom_boxplot(outlier.color = "red", fill = "lightblue") + 
+    scale_x_discrete() +
+    labs(title = title, y = ylab) + 
+    coord_flip() + 
+    geom_point(aes(x = 0, y = mean_val),  
+               shape = 16,                       
+               size = 2,                         
+               color = "blue") +
+    theme(plot.title = element_text(hjust = 0.5, size = 12))
+  
+  return(plot)
+}
+
+# Create boxplots for each variable
+plot1 <- create_boxplot(kidney_data_expand, "gravity", "Urine Specific Gravity", "Gravity")
+plot2 <- create_boxplot(kidney_data_expand, "ph", "Urine pH", "pH")
+plot3 <- create_boxplot(kidney_data_expand, "osmo", "Urine Osmolarity (mOsm/L)", "Osmo")
+plot4 <- create_boxplot(kidney_data_expand, "cond", "Urine Conductivity (mMho)", "Cond")
+plot5 <- create_boxplot(kidney_data_expand, "urea", "Urine Urea Concentration (mmol/L)", "Urea")
+plot6 <- create_boxplot(kidney_data_expand, "calc", "Urine Calcium Concentration (mmol/L)", "Calc")
+plot7 <- create_boxplot(kidney_data_expand, "ph_squared", "Polynomial Feature pH^squared", "pH Squared")
+plot8 <- create_boxplot(kidney_data_expand, "ph_cubed", "Polynomial Feature pH^cubed", "pH Cubed")
+plot9 <- create_boxplot(kidney_data_expand, "cond_squared", "Polynomial Feature Conductivity^squared", "Cond Squared")
+plot10 <- create_boxplot(kidney_data_expand, "cond_cubed", "Polynomial Feature Conductivity^cubed", "Cond Cubed")
+plot11 <- create_boxplot(kidney_data_expand, "mean_agg_osmo_cond", "Mean Aggregate Osmolarity and Conductivity", "Mean Agg Osmo Cond")
+plot12 <- create_boxplot(kidney_data_expand, "mean_agg_calc_ph", "Mean Aggregate Calcium and pH", "Mean Agg Calc pH")
+plot13 <- create_boxplot(kidney_data_expand, "max_agg_osmo_cond", "Max Aggregate Osmolarity and Conductivity", "Max Agg Osmo Cond")
+plot14 <- create_boxplot(kidney_data_expand, "max_agg_calc_ph", "Max Aggregate Calcium and pH", "Max Agg Calc pH")
+plot15 <- create_boxplot(kidney_data_expand, "calc_to_urea_ratio", "Calcium to Urea Ratio", "Calc to Urea Ratio")
+plot16 <- create_boxplot(kidney_data_expand, "osmo_to_cond_ratio", "Osmolarity to Conductivity Ratio", "Osmo to Cond Ratio")
+
+# Arrange boxplots in a 8x2 matrix
+grid.arrange(
+  arrangeGrob(plot1, plot2, ncol = 2), 
+  arrangeGrob(plot3, plot4, ncol = 2), 
+  arrangeGrob(plot5, plot6, ncol = 2), 
+  arrangeGrob(plot7, plot8, ncol = 2), 
+  arrangeGrob(plot9, plot10, ncol = 2), 
+  arrangeGrob(plot11, plot12, ncol = 2),
+  arrangeGrob(plot13, plot14, ncol = 2), 
+  arrangeGrob(plot15, plot16, ncol = 2), 
+  ncol = 1
+)
+})
+```
+
+### Further investigate Outliers
+
+```{r}
+# Grubbs' test for single outlier
+grubbs_test_ph_sq <- grubbs.test(kidney_data_expand$ph_squared, type = 10)
+grubbs_test_ph_cu <- grubbs.test(kidney_data_expand$ph_cubed, type = 10)
+grubbs_test_cond_cu <- grubbs.test(kidney_data_expand$cond_cubed, type = 10)
+grubbs_test_mean_calc_ph <- grubbs.test(kidney_data_expand$mean_agg_calc_ph, type = 10)
+grubbs_test_max_calc_ph <- grubbs.test(kidney_data_expand$max_agg_calc_ph, type = 10)
+grubbs_test_rat_calc_Urea <- grubbs.test(kidney_data_expand$calc_to_urea_ratio, type = 10)
+grubbs_test_rat_osmo_cond <- grubbs.test(kidney_data_expand$osmo_to_cond_ratio, type = 10)
+
+# Print Grubbs' test results
+cat("Grubbs' test for ph_sq:\n")
+print(grubbs_test_ph_sq)
+
+cat("Grubbs' test for ph_cu:\n")
+print(grubbs_test_ph_cu)
+
+cat("Grubbs' test for cond_cu:\n")
+print(grubbs_test_cond_cu)
+
+cat("Grubbs' test for mean_agg_calc_ph:\n")
+print(grubbs_test_mean_calc_ph)
+
+cat("Grubbs' test for max_agg_calc_ph:\n")
+print(grubbs_test_max_calc_ph)
+
+cat("Grubbs' test for calc_to_urea_ratio:\n")
+print(grubbs_test_rat_calc_Urea)
+
+cat("Grubbs' test for osmo_to_cond_ratio:\n")
+print(grubbs_test_rat_osmo_cond)
+
+```
+
+For `ph_squared`, our Grubbs' test yielded a G-value of 2.86591 and a p-value of 0.1307. Since the p-value is greater than the standard significance level of 0.05, we fail to reject the null hypothesis, indicating that the highest value of 63.0436 **is not considered** an outlier in this distribution. Similarly, the test for `ph_cubed` resulted in a G-value of 3.09008 and a p-value of 0.05769. The p-value slightly exceeds 0.05, leading us to conclude that the highest value of 500.566184 is also **not considered** an outlier.
+
+In contrast, the Grubbs' test for `cond_cubed` shows a G-value of 3.4739 with a p-value of 0.01205. As this p-value is below 0.05, we reject the null hypothesis, confirming that the highest value of 54872 **is indeed an outlier**. The tests for `mean_agg_calc_ph` and `max_agg_calc_ph`, however, do not show significant outliers with p-values of 0.05995 and 0.3293 respectively, indicating **no outliers** at these levels for us.
+
+For the `calc_to_urea_ratio`, our Grubbs' test presents a striking result with a G-value of 6.19494 and an extremely low p-value of 1.466e-11. This significant finding leads us to reject the null hypothesis and identify the lowest value of -37.7309774355792 as a **true outlier**. Similarly, the `osmo_to_cond_ratio` test reveals a G-value of 8.632685 and a p-value less than 2.2e-16, strongly indicating that the highest value of 232.48791970112 **is an outlier**.
+
+Therefore, our analysis confirms the presence of true outliers in `cond_cubed`, `calc_to_urea_ratio`, and `osmo_to_cond_ratio`, suggesting these points significantly deviate from the rest of our dataset and could potentially impact our further analysis and model outcomes.
+
+```{r}
+suppressWarnings({
+  # Function to calculate z-scores for a vector
+calculate_z_scores <- function(x) { (x - mean(x)) / sd(x) }
+
+# Set the z-score threshold for outlier detection
+z_score_threshold <- 2.5
+
+# Calculate z-scores for all relevant features
+ph_sq_z_scores <- calculate_z_scores(kidney_data_expand$ph_squared)
+ph_cu_z_scores <- calculate_z_scores(kidney_data_expand$ph_cubed)
+cond_cu_z_scores <- calculate_z_scores(kidney_data_expand$cond_cubed)
+mean_calc_ph_z_scores <- calculate_z_scores(kidney_data_expand$mean_agg_calc_ph)
+max_calc_ph_z_scores <- calculate_z_scores(kidney_data_expand$max_agg_calc_ph)
+calc_urea_ratio_z_scores <- calculate_z_scores(kidney_data_expand$calc_to_urea_ratio)
+osmo_cond_ratio_z_scores <- calculate_z_scores(kidney_data_expand$osmo_to_cond_ratio)
+
+# Identify outliers based on z-scores
+ph_sq_outliers <- kidney_data_expand %>% filter(abs(ph_sq_z_scores) > z_score_threshold) %>% select(ph_squared)
+ph_cu_outliers <- kidney_data_expand %>% filter(abs(ph_cu_z_scores) > z_score_threshold) %>% select(ph_cubed)
+cond_cu_outliers <- kidney_data_expand %>% filter(abs(cond_cu_z_scores) > z_score_threshold) %>% select(cond_cubed)
+mean_calc_ph_outliers <- kidney_data_expand %>% filter(abs(mean_calc_ph_z_scores) > z_score_threshold) %>% select(mean_agg_calc_ph)
+max_calc_ph_outliers <- kidney_data_expand %>% filter(abs(max_calc_ph_z_scores) > z_score_threshold) %>% select(max_agg_calc_ph)
+calc_urea_ratio_outliers <- kidney_data_expand %>% filter(abs(calc_urea_ratio_z_scores) > z_score_threshold) %>% select(calc_to_urea_ratio)
+osmo_cond_ratio_outliers <- kidney_data_expand %>% filter(abs(osmo_cond_ratio_z_scores) > z_score_threshold) %>% select(osmo_to_cond_ratio)
+
+# Function to apply Dixon's Q test if sample size is between 3 and 30
+apply_dixons_q_test <- function(data, column_name) {
+  column_data <- data[[column_name]]
+  sample_size <- length(column_data)
+  
+  if (sample_size >= 3 && sample_size <= 30) {
+    result <- dixon.test(column_data, opposite = TRUE)
+    return(result)
+  } else {
+    return(paste("Sample size for", column_name, "is", sample_size, "which is outside the range of 3-30"))
+  }
+}
+
+# Perform Dixon's Q test on identified outliers from z-score method
+ph_sq_test_results <- apply_dixons_q_test(ph_sq_outliers, "ph_squared")
+ph_cu_test_results <- apply_dixons_q_test(ph_cu_outliers, "ph_cubed")
+cond_cu_test_results <- apply_dixons_q_test(cond_cu_outliers, "cond_cubed")
+mean_calc_ph_test_results <- apply_dixons_q_test(mean_calc_ph_outliers, "mean_agg_calc_ph")
+max_calc_ph_test_results <- apply_dixons_q_test(max_calc_ph_outliers, "max_agg_calc_ph")
+calc_urea_ratio_test_results <- apply_dixons_q_test(calc_urea_ratio_outliers, "calc_to_urea_ratio")
+osmo_cond_ratio_test_results <- apply_dixons_q_test(osmo_cond_ratio_outliers, "osmo_to_cond_ratio")
+
+# Print the Dixon's Q test results
+cat("Dixon's Q Test Results:\n")
+print(ph_sq_test_results)
+print(ph_cu_test_results)
+print(cond_cu_test_results)
+print(mean_calc_ph_test_results)
+print(max_calc_ph_test_results)
+print(calc_urea_ratio_test_results)
+print(osmo_cond_ratio_test_results)
+
+# Perform Grubbs' test for each feature
+cat("Grubbs' Test Results:\n")
+print(grubbs.test(kidney_data_expand$ph_squared, type = 10))
+print(grubbs.test(kidney_data_expand$ph_cubed, type = 10))
+print(grubbs.test(kidney_data_expand$cond_cubed, type = 10))
+print(grubbs.test(kidney_data_expand$mean_agg_calc_ph, type = 10))
+print(grubbs.test(kidney_data_expand$max_agg_calc_ph, type = 10))
+print(grubbs.test(kidney_data_expand$calc_to_urea_ratio, type = 10))
+print(grubbs.test(kidney_data_expand$osmo_to_cond_ratio, type = 10))
+
+})
+
+```
+
+For the Dixon's Q tests, none of the p-values were below the standard significance level of 0.05, leading us to conclude that we do not have sufficient evidence to label any of the tested values as outliers. Specifically, the tests for the lowest values of 62.41, 493.039, 45882.712, 1.72920819112995, and -37.7309774355792 all resulted in high p-values (ranging from 0.07071 to 0.9986), indicating that these values are not considered outliers. Additionally, for `max_agg_calc_ph` and `osmo_to_cond_ratio`, the sample sizes were insufficient (n=1) to conduct the Dixon's Q test, which requires a sample size between 3 and 30.
+
+On the other hand, our Grubbs' test results provided some contrasting insights. The test for `cond_cubed` returned a p-value of 0.01205, indicating that the highest value of 54872 is indeed an outlier. Similarly, the tests for `calc_to_urea_ratio` and `osmo_to_cond_ratio` yielded extremely low p-values (1.466e-11 and less than 2.2e-16, respectively), strongly suggesting that the values -37.7309774355792 and 232.48791970112 are significant outliers. However, for `ph_squared`, `ph_cubed`, `mean_agg_calc_ph`, and `max_agg_calc_ph`, the p-values were above 0.05, suggesting no significant outliers according to the Grubbs' test for these features.
+
+In summary, while the Dixon's Q test did not identify any outliers among the features tested, our Grubbs' test identified true outliers in `cond_cubed`, `calc_to_urea_ratio`, and `osmo_to_cond_ratio`. These findings highlight the importance of using multiple methods for outlier detection, as different tests may yield varying results, potentially affecting our interpretation and subsequent analyses.
+
+### Scatter plots - Expanded Predictor Relationships
+
+```{r}
+# Define the predictor variables
+kidney_predictor_expand <- c("gravity", "ph", "osmo", "cond", "urea", "calc","ph_squared", "ph_cubed", "cond_squared", "cond_cubed", "mean_agg_osmo_cond", "mean_agg_calc_ph", "max_agg_osmo_cond", "max_agg_calc_ph", "calc_to_urea_ratio", "osmo_to_cond_ratio")
+
+# Subset the kidney_data dataframe using the predictor variables
+kidney_predictor_data_expand = kidney_data_expand[kidney_predictor_expand]
+
+# Run grid of pairwise scatter plots for preditor variables
+pairs(kidney_predictor_data_expand)
+```
+
+### Correlation Matrix - Predictor Relationships
+
+```{r}
+# Calculate correlations for predictor variables:
+kidney_correlations_expand <- cor(kidney_predictor_data_expand)
+
+# Plot the correlation matrix for kidney data
+corrplot(kidney_correlations_expand, method = 'color', order = 'hclust', addCoef.col = 'black', tl.pos = 'd', tl.cex = .6, number.cex = 0.5, cl.pos = 'r', col = COL2('PRGn'), outline=TRUE)
+
+# Round the correlation matrix for better readability
+rounded_correlations_expand <- round(kidney_correlations_expand, 2)
+
+# Convert the matrix to a data frame 
+df_correlations_expand <- as.data.frame(rounded_correlations_expand)
+
+df_correlations_expand
+```
+
+In our analysis of the `kidney_data_expand` dataset, which includes both original and engineered features, we can compare how the correlations have shifted from those observed in the original `kidney_data` dataset. This comparison helps us understand the impact of feature engineering on our dataset and potentially offers insights into the relationships between variables with the addition of polynomial and aggregated features.
+
+### Original Dataset Correlations:
+
+From the original dataset, we note strong positive correlations between `gravity` and `osmo` (0.86), and `gravity` and `urea` (0.82), suggesting a clear relationship where higher specific gravity indicates higher concentrations of solutes, specifically osmolarity and urea. The correlations involving `ph` are predominantly negative with other features like `gravity`, `osmo`, and `urea`, indicating that higher acidity or alkalinity might be associated with lower concentrations of these substances. Conductivity (`cond`) shows a good positive correlation with `osmo` (0.81) and a moderate one with `gravity` (0.56), reflecting its dependence on the ionic content that contributes to osmolarity.
+
+### Expanded Dataset Correlations:
+
+With the inclusion of engineered features such as `ph_squared`, `ph_cubed`, `cond_squared`, `cond_cubed`, and various aggregate measures, we observe some interesting shifts and new dynamics:
+
+-   **Squared and Cubed Features**: Both `ph_squared` and `ph_cubed` maintain very high correlations with `ph` (around 0.99), as expected since they are direct transformations. However, their correlations with other variables such as `gravity` and `osmo` remain negative, similar to the original `ph` feature, albeit slightly weaker. This suggests that the non-linear transformations of `ph` do not significantly change its underlying relationships with other features.
+
+-   **Aggregated Measures**: The `mean_agg_osmo_cond`, representing a combination of osmolarity and conductivity, shows very high correlations with both `osmo` and `cond` (0.95 and 0.95, respectively), much higher than the correlations seen in the original dataset. This indicates that aggregating these features accentuates their relatedness, potentially offering a more robust measure of solute concentration.
+
+-   **Conductivity Squared and Cubed**: The inclusion of `cond_squared` and `cond_cubed` shows that these transformations deepen the correlation with the original `cond` measure (0.98 and 0.93, respectively), suggesting that higher powers of conductivity could be indicative of more pronounced changes in solute concentrations or ionic strengths.
+
+### Addressing Multicollinearity:
+
+The high correlations observed among several original and engineered features necessitate the removal of highly correlated predictors. This is critical when employing these variables in regression models or other statistical analyses that assume minimal multicollinearity among predictors. High multicollinearity can inflate the variance of parameter estimates, which complicates the interpretation of the effects of individual predictors. To mitigate this, we will proactively remove highly correlated features, which should alleviate multicollinearity issues. This strategy ensures the stability and interpretability of our model coefficients.
+
+By analyzing these datasets, we note that feature engineering, especially through polynomial transformations and aggregate measures, often intensifies existing correlations while preserving the underlying relationship patterns seen in the original data. Leveraging these engineered features allows for a deeper understanding of the data, which is vital for predictive modeling or further statistical analysis where interactions and non-linear relationships are crucial. These insights are instrumental in selecting and refining features that enhance our capability to develop robust models for predicting kidney-related conditions more effectively.
+
+#### Predictor Variable Correlation with Target Variable
+
+```{r}
+# Calculate correlation matrix
+cor_matrix <- cor(kidney_data_expand)
+
+# Extract correlations with the target variable
+cor_with_target <- cor_matrix[, "target"]
+
+# Create data frame for plotting
+cor_df <- data.frame(Variable = rownames(cor_matrix), Correlation = cor_with_target)
+
+# Remove the row corresponding to 'target'
+cor_df <- cor_df[cor_df$Variable != "target", ]
+
+print(cor_df)
+
+# Plot correlation values with the target variable using a bar plot
+ggplot(cor_df, aes(x = reorder(Variable, -Correlation), y = Correlation)) +
+  geom_bar(stat = "identity", fill = "dodgerblue") +
+  coord_flip() +
+  labs(title = "Correlation with the Target Variable",
+       x = "Predictor Variable",
+       y = "Correlation") +
+  theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, size = 14))
+```
+
+In our analysis of the `kidney_data_expand` dataset, which includes both original and engineered features, we compared how correlations shifted from those observed in the original `kidney_data` dataset. This comparison helps us understand the impact of feature engineering on our dataset and potentially offers insights into the relationships between variables with the addition of polynomial and aggregated features.
+
+### Original Dataset (`kidney_data`) Correlations:
+
+The original dataset shows strong positive correlations between variables like `gravity` and `osmo` (0.86), and `gravity` and `urea` (0.82), indicating higher solute concentrations with increasing gravity. pH levels are negatively correlated with most variables, suggesting that higher acidity or alkalinity might be associated with different solute characteristics.
+
+### Expanded Dataset (`kidney_data_expand`) Correlations:
+
+The expanded dataset introduces engineered features such as `ph_squared`, `ph_cubed`, `cond_squared`, and `cond_cubed`. While these transformations maintain their expected relationships with their base variables (`ph`, `cond`), their correlations with the target are weaker or even negative in some cases. This suggests that these polynomial transformations do not necessarily enhance predictive power and might introduce redundancy or complexity without significant benefits.
+
+### Addressing Multicollinearity and Assessing Feature Importance:
+
+With the inclusion of polynomial and aggregated measures in our dataset, it becomes essential to remove highly correlated features to prevent inflated variance in parameter estimates, which can mask the actual influence of predictors in the model. By proactively addressing these correlations, we ensure that our model's coefficients remain stable and interpretable.
+
+In addition to handling multicollinearity, employing a RandomForest model allows us to measure the importance of each feature by assessing its impact on reducing the model's prediction error. This method is invaluable for verifying the effectiveness of engineered features in a complex, non-linear framework, such as when developing predictive models for kidney-related conditions. This dual approach not only clarifies feature relationships but also enhances our understanding of how each variable contributes to the model's performance, guiding us towards more accurate and reliable predictive modeling.
+
+## Test for Multicollinearity and Feature Importance
+
+```{r}
+# Move the 'target' column to the end
+kidney_data_expand <- kidney_data_expand[c(setdiff(names(kidney_data_expand), "target"), "target")]
+head(kidney_data_expand)
+```
+
+```{r}
+# Ensure the target variable is treated as a factor for classification
+kidney_data_expand$target <- as.factor(kidney_data_expand$target)
+
+# Fit the RandomForest model as a classifier
+rf_classifier <- randomForest(target ~ ., data = kidney_data_expand, ntree = 500, importance = TRUE)
+
+# View the importance of each feature
+importance(rf_classifier)
+
+# Plot feature importance
+varImpPlot(rf_classifier)
+```
+
+Based on the results from our RandomForest classifier, we can provide insights into the importance of various features in predicting our target variable. The features 'calc', with the highest MeanDecreaseAccuracy and MeanDecreaseGini scores, along with 'urea' and 'mean_agg_calc_ph', appear to be the most influential in affecting the model's accuracy and the reduction in impurity. This indicates that these features play a crucial role in differentiating between the classes of our target variable.
+
+Interestingly, 'calc' stands out with significantly high importance metrics, suggesting that this feature has a dominant effect on the model's decision-making process. On the other hand, features like 'mean_agg_osmo_cond' and 'max_agg_osmo_cond', which showed negative impacts on MeanDecreaseAccuracy, might be less reliable or even detrimental in predicting the target, reflecting potential areas for model simplification by removing or reevaluating these features.
+
+The importance values also highlight the contribution of engineered features such as 'ph_squared', 'ph_cubed', 'cond_squared', and 'cond_cubed'. These polynomial transformations help capture non-linear relationships but vary in their effectiveness. For example, 'ph_cubed' has a notably positive impact compared to 'mean_agg_osmo_cond', which negatively influences model accuracy.
+
+Overall, these insights guide us in refining our feature selection, potentially enhancing the model's performance by focusing on the most impactful variables and considering the elimination of those that contribute negatively to the model's predictive ability.
+
+### Feature Reduction Based on Correlation
+
+```{r}
+# find highly correlated predictors
+highCorr_kidney_expand <- findCorrelation(kidney_correlations_expand, cutoff = .75, verbose = TRUE) 
+
+dim(highCorr_kidney_expand)
+
+# remove highly correlated predictors
+filtered_kidney_expand <- kidney_data_expand[, -highCorr_kidney_expand] 
+
+head(filtered_kidney_expand)
+```
+
+When we applied the `findCorrelation` function with a cutoff of 0.75 to our dataset `kidney_data_expand`, our goal was to identify and remove variables that were highly correlated with each other. This step is essential in statistical modeling to prevent multicollinearity, which can skew the results and make the model less reliable.
+
+The verbose output from the function provided detailed comparisons between pairs of variables, showing their correlation values and the means of their absolute correlations with all other variables. For example, the comparison between the variables in rows 3 and 11 revealed a correlation of 0.952. Since the mean absolute correlation of row 3 was higher than that of row 11, column 3 was flagged for removal. This selective removal process was consistent across all high correlations identified, prioritizing the removal of variables with higher mean absolute correlations to reduce redundancy and potential bias in our model.
+
+Through this systematic process, we identified several columns for removal, including those for variables like `osmo`, `ph_squared`, and others that were highly correlated with their counterparts. After this filtering, our dataset's dimensionality significantly reduced; we went from 17 features in our expanded data set to just 8 remaining features. This substantial reduction in features ensures that our subsequent analyses would rely on predictors that provide unique and valuable information for modeling without interference from redundant data.
+
+The streamlined dataset with reduced multicollinearity now includes less intertwined variables such as `gravity`, `calc`, and `ph_cubed`, among others. The first few rows of the filtered dataset confirm that the remaining variables provide a robust basis for any statistical or machine learning applications, enhancing the quality and reliability of our predictive modeling efforts.
+
+Incorporating the feature importance results into our analysis of variable reduction due to multicollinearity, we find that our streamlined dataset not only reduced complexity but also preserved some of the most impactful predictors. The feature importance, measured by MeanDecreaseAccuracy and MeanDecreaseGini, offers valuable insights into how each variable contributes to the predictive power of our model.
+
+From the feature importance results, `calc` stands out significantly with the highest values in both MeanDecreaseAccuracy and MeanDecreaseGini. This suggests that `calc` is a critical predictor, and notably, it was retained in the filtered dataset post multicollinearity reduction. This alignment indicates that our reduction efforts effectively preserved essential features while eliminating redundancy.
+
+Additionally, other retained variables like `gravity` and `ph_cubed` also show considerable feature importance. `Gravity` has a notable impact on model accuracy and is crucial in the predictive modeling context, emphasizing its relevance and the appropriateness of its retention.
+
+Interestingly, some variables with high importance scores were removed due to high correlations with other variables, which might initially seem concerning. However, this overlap in feature importance and high correlation underscores the trade-off inherent in reducing multicollinearity: by removing one of two highly correlated variables, we potentially lose some information but gain in terms of model stability and interpretability.
