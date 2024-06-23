@@ -25,7 +25,7 @@ library(corrplot)
 library(stats)
 library(car)
 library(randomForest)
-
+library(pROC)
 })
 ```
 
@@ -735,3 +735,633 @@ From the feature importance results, `calc` stands out significantly with the hi
 Additionally, other retained variables like `gravity` and `ph_cubed` also show considerable feature importance. `Gravity` has a notable impact on model accuracy and is crucial in the predictive modeling context, emphasizing its relevance and the appropriateness of its retention.
 
 Interestingly, some variables with high importance scores were removed due to high correlations with other variables, which might initially seem concerning. However, this overlap in feature importance and high correlation underscores the trade-off inherent in reducing multicollinearity: by removing one of two highly correlated variables, we potentially lose some information but gain in terms of model stability and interpretability.
+
+## Begin Modeling
+
+### Cross Validation - Original Data Frame Model
+
+```{r}
+# Set a seed for reproducibility
+set.seed(123)
+
+# Ensure the target variable is treated as a factor for classification
+kidney_data$target <- as.factor(kidney_data$target)
+
+# Rename target levels manually
+levels(kidney_data$target) <- c("Class0", "Class1")
+
+
+# Set up training control
+train_control <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,  
+  summaryFunction = twoClassSummary,  
+  savePredictions = "final"  
+)
+
+# Define a list of models to train with updated metric for optimization
+kidney_models_Orig_cv <- list(
+  logistic_Orig_cv = train(target ~ ., 
+                   data = kidney_data, 
+                   method = "glmnet", 
+                   preProc = c("center", "scale"),
+                   metric = "ROC",
+                   family = "binomial", 
+                   trControl = train_control),
+  
+  decision_tree_Orig_cv = train(target ~ ., 
+                        data = kidney_data, 
+                        method = "rpart",
+                        preProc = c("center", "scale"),
+                        metric = "ROC",
+                        trControl = train_control),
+  
+  random_forest_Orig_cv = train(target ~ ., 
+                        data = kidney_data, 
+                        method = "rf",
+                        preProc = c("center", "scale"),
+                        metric = "ROC",
+                        trControl = train_control),
+  
+  svm_Orig_cv = train(target ~ ., 
+              data = kidney_data, 
+              method = "svmRadial",
+              preProc = c("center", "scale"),
+              metric = "ROC",
+              trControl = train_control)
+)
+
+# Evaluate model
+extract_metrics <- function(model, model_name) {
+  # Extract results and predictions from the model
+  results <- model$results
+  preds <- model$pred  
+
+  # Calculate Accuracy from the predictions
+  correct_predictions <- preds$obs == preds$pred
+  accuracy <- sum(correct_predictions) / nrow(preds)
+
+  # Create a data frame with calculated metrics
+  data.frame(
+    Model = model_name,
+    Accuracy = accuracy,
+    ROC = max(results$ROC, na.rm = TRUE),
+    Sensitivity = max(results$Sens, na.rm = TRUE),
+    Specificity = max(results$Spec, na.rm = TRUE)
+  )
+}
+
+# Apply the updated extraction function
+orig_cv_metrics_df <- do.call(rbind, lapply(names(kidney_models_Orig_cv), function(name) {
+  extract_metrics(kidney_models_Orig_cv[[name]], name)
+}))
+
+# Print the combined metrics DataFrame
+print(orig_cv_metrics_df)
+
+```
+
+### ROC-AUC Curve - Cross Validation - Original Data Frame Model
+
+```{r}
+suppressMessages({
+
+  set.seed(123)
+  
+# Create an empty list to store ROC curve plots
+roc_plots <- list()
+
+# Loop through each model to calculate ROC curves and plot them
+for (name in names(kidney_models_Orig_cv)) {
+  # Extract predictions for the current model
+  preds <- kidney_models_Orig_cv[[name]]$pred
+  
+  # Calculate ROC curve using pROC
+  roc_obj <- roc(response = preds$obs, predictor = as.numeric(preds$Class1))
+
+  # Create the ROC plot using ggplot2
+  roc_plot <- ggplot(data = data.frame(
+                        TPR = roc_obj$sensitivities,
+                        FPR = roc_obj$specificities),
+                     aes(x = FPR, y = TPR)) +
+    geom_line() +
+    geom_abline(linetype = "dashed") +
+    labs(title = paste("ROC Curve for", name),
+         x = "False Positive Rate (1 - Specificity)",
+         y = "True Positive Rate (Sensitivity)") +
+    annotate("text", x = .5, y = .5, label = sprintf("AUC = %.2f", auc(roc_obj)), parse = TRUE)
+
+  # Store the plot in the list
+  roc_plots[[name]] <- roc_plot
+}
+
+# Using an invisible() wrapper to suppress automatic output
+invisible(lapply(roc_plots, print))
+})
+```
+
+### Variable Importance - Cross Validation - Original Data Frame Model
+
+```{r}
+# Function to calculate and plot variable importance
+plot_variable_importance <- function(model, model_name) {
+  # Calculate variable importance
+  var_imp <- varImp(model, scale = FALSE)
+
+  # Plot the top 5 important variables
+  plot_obj <- plot(var_imp, top = 5, main = paste("Variable Importance for", model_name))
+  
+  # Explicitly print the plot object
+  print(plot_obj)
+}
+
+
+# Loop through each model in the list and plot variable importance
+for (name in names(kidney_models_Orig_cv)) {
+  plot_variable_importance(kidney_models_Orig_cv[[name]], name)
+}
+
+```
+
+### Leave-One-Out Cross-Validation - Original Data Frame Model
+
+```{r}
+# Set a seed for reproducibility
+set.seed(123)
+
+# Ensure the target variable is treated as a factor for classification
+kidney_data$target <- as.factor(kidney_data$target)
+
+# Rename target levels manually
+levels(kidney_data$target) <- c("Class0", "Class1")
+
+
+# Set up training control
+train_control <- trainControl(
+  method = "LOOCV",
+  number = 10,
+  classProbs = TRUE,  
+  summaryFunction = twoClassSummary,  
+  savePredictions = "final"  
+)
+
+# Define a list of models to train with updated metric for optimization
+kidney_models_Orig_loocv <- list(
+  logistic_Orig_loocv = train(target ~ ., 
+                   data = kidney_data, 
+                   method = "glmnet", 
+                   preProc = c("center", "scale"),
+                   metric = "ROC",
+                   family = "binomial", 
+                   trControl = train_control),
+  
+  decision_tree_Orig_loocv = train(target ~ ., 
+                        data = kidney_data, 
+                        method = "rpart",
+                        preProc = c("center", "scale"),
+                        metric = "ROC",
+                        trControl = train_control),
+  
+  random_forest_Orig_loocv = train(target ~ ., 
+                        data = kidney_data, 
+                        method = "rf",
+                        preProc = c("center", "scale"),
+                        metric = "ROC",
+                        trControl = train_control),
+  
+  svm_Orig_loocv = train(target ~ ., 
+              data = kidney_data, 
+              method = "svmRadial",
+              preProc = c("center", "scale"),
+              metric = "ROC",
+              trControl = train_control)
+)
+
+# Evaluate model
+extract_metrics <- function(model, model_name) {
+  # Extract results and predictions from the model
+  results <- model$results
+  preds <- model$pred  
+
+  # Calculate Accuracy from the predictions
+  correct_predictions <- preds$obs == preds$pred
+  accuracy <- sum(correct_predictions) / nrow(preds)
+
+  # Create a data frame with calculated metrics
+  data.frame(
+    Model = model_name,
+    Accuracy = accuracy,
+    ROC = max(results$ROC, na.rm = TRUE),
+    Sensitivity = max(results$Sens, na.rm = TRUE),
+    Specificity = max(results$Spec, na.rm = TRUE)
+  )
+}
+
+# Apply the updated extraction function
+orig_loocv_metrics_df <- do.call(rbind, lapply(names(kidney_models_Orig_loocv), function(name) {
+  extract_metrics(kidney_models_Orig_loocv[[name]], name)
+}))
+
+# Print the combined metrics DataFrame
+print(orig_loocv_metrics_df)
+
+```
+
+### ROC-AUC Curve - Leave-One-Out Cross-Validation - Original Data Frame Model
+
+```{r}
+suppressMessages({
+
+  set.seed(123)
+  
+# Create an empty list to store ROC curve plots
+roc_plots <- list()
+
+# Loop through each model to calculate ROC curves and plot them
+for (name in names(kidney_models_Orig_loocv)) {
+  # Extract predictions for the current model
+  preds <- kidney_models_Orig_loocv[[name]]$pred
+  
+  # Calculate ROC curve using pROC
+  roc_obj <- roc(response = preds$obs, predictor = as.numeric(preds$Class1))
+
+  # Create the ROC plot using ggplot2
+  roc_plot <- ggplot(data = data.frame(
+                        TPR = roc_obj$sensitivities,
+                        FPR = roc_obj$specificities),
+                     aes(x = FPR, y = TPR)) +
+    geom_line() +
+    geom_abline(linetype = "dashed") +
+    labs(title = paste("ROC Curve for", name),
+         x = "False Positive Rate (1 - Specificity)",
+         y = "True Positive Rate (Sensitivity)") +
+    annotate("text", x = .5, y = .5, label = sprintf("AUC = %.2f", auc(roc_obj)), parse = TRUE)
+
+  # Store the plot in the list
+  roc_plots[[name]] <- roc_plot
+}
+
+# Using an invisible() wrapper to suppress automatic output
+invisible(lapply(roc_plots, print))
+})
+```
+
+### Variable Importance - Leave-One-Out Cross-Validation - Original Data Frame Model
+
+```{r}
+# Function to calculate and plot variable importance
+plot_variable_importance <- function(model, model_name) {
+  # Calculate variable importance
+  var_imp <- varImp(model, scale = FALSE)
+
+  # Plot the top 5 important variables
+  plot_obj <- plot(var_imp, top = 5, main = paste("Variable Importance for", model_name))
+  
+  # Explicitly print the plot object
+  print(plot_obj)
+}
+
+
+# Loop through each model in the list and plot variable importance
+for (name in names(kidney_models_Orig_cv)) {
+  plot_variable_importance(kidney_models_Orig_cv[[name]], name)
+}
+
+```
+
+### Cross Validation - New Data Frame Model
+
+```{r}
+# Set a seed for reproducibility
+set.seed(123)
+
+# Ensure the target variable is treated as a factor for classification
+kidney_data_expand$target <- as.factor(kidney_data_expand$target)
+
+# Rename target levels manually
+levels(kidney_data_expand$target) <- c("Class0", "Class1")
+
+
+# Set up training control
+train_control <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,  
+  summaryFunction = twoClassSummary,  
+  savePredictions = "final"  
+)
+
+# Define a list of models to train with updated metric for optimization
+kidney_models_new_cv <- list(
+  logistic_new_cv = train(target ~ ., 
+                   data = kidney_data_expand, 
+                   method = "glmnet", 
+                   preProc = c("center", "scale"),
+                   metric = "ROC",
+                   family = "binomial", 
+                   trControl = train_control),
+  
+  decision_tree_new_cv = train(target ~ ., 
+                        data = kidney_data_expand, 
+                        method = "rpart",
+                        preProc = c("center", "scale"),
+                        metric = "ROC",
+                        trControl = train_control),
+  
+  random_forest_new_cv = train(target ~ ., 
+                        data = kidney_data_expand, 
+                        method = "rf",
+                        preProc = c("center", "scale"),
+                        metric = "ROC",
+                        trControl = train_control),
+  
+  svm_new_cv = train(target ~ ., 
+              data = kidney_data_expand, 
+              method = "svmRadial",
+              preProc = c("center", "scale"),
+              metric = "ROC",
+              trControl = train_control)
+)
+
+# Evaluate model
+extract_metrics <- function(model, model_name) {
+  # Extract results and predictions from the model
+  results <- model$results
+  preds <- model$pred  
+
+  # Calculate Accuracy from the predictions
+  correct_predictions <- preds$obs == preds$pred
+  accuracy <- sum(correct_predictions) / nrow(preds)
+
+  # Create a data frame with calculated metrics
+  data.frame(
+    Model = model_name,
+    Accuracy = accuracy,
+    ROC = max(results$ROC, na.rm = TRUE),
+    Sensitivity = max(results$Sens, na.rm = TRUE),
+    Specificity = max(results$Spec, na.rm = TRUE)
+  )
+}
+
+# Apply the updated extraction function
+new_cv_metrics_df <- do.call(rbind, lapply(names(kidney_models_new_cv), function(name) {
+  extract_metrics(kidney_models_new_cv[[name]], name)
+}))
+
+# Print the combined metrics DataFrame
+print(new_cv_metrics_df)
+
+```
+
+### ROC-AUC Curve - Cross Validation - New Data Frame Model
+
+```{r}
+suppressMessages({
+
+  set.seed(123)
+  
+# Create an empty list to store ROC curve plots
+roc_plots <- list()
+
+# Loop through each model to calculate ROC curves and plot them
+for (name in names(kidney_models_new_cv)) {
+  # Extract predictions for the current model
+  preds <- kidney_models_new_cv[[name]]$pred
+  
+  # Calculate ROC curve using pROC
+  roc_obj <- roc(response = preds$obs, predictor = as.numeric(preds$Class1))
+
+  # Create the ROC plot using ggplot2
+  roc_plot <- ggplot(data = data.frame(
+                        TPR = roc_obj$sensitivities,
+                        FPR = roc_obj$specificities),
+                     aes(x = FPR, y = TPR)) +
+    geom_line() +
+    geom_abline(linetype = "dashed") +
+    labs(title = paste("ROC Curve for", name),
+         x = "False Positive Rate (1 - Specificity)",
+         y = "True Positive Rate (Sensitivity)") +
+    annotate("text", x = .5, y = .5, label = sprintf("AUC = %.2f", auc(roc_obj)), parse = TRUE)
+
+  # Store the plot in the list
+  roc_plots[[name]] <- roc_plot
+}
+
+# Using an invisible() wrapper to suppress automatic output
+invisible(lapply(roc_plots, print))
+})
+```
+
+### Variable Importance - Cross Validation - New Data Frame Model
+
+```{r}
+# Function to calculate and plot variable importance
+plot_variable_importance <- function(model, model_name) {
+  # Calculate variable importance
+  var_imp <- varImp(model, scale = FALSE)
+
+  # Plot the top 5 important variables
+  plot_obj <- plot(var_imp, top = 5, main = paste("Variable Importance for", model_name))
+  
+  # Explicitly print the plot object
+  print(plot_obj)
+}
+
+
+# Loop through each model in the list and plot variable importance
+for (name in names(kidney_models_new_cv)) {
+  plot_variable_importance(kidney_models_new_cv[[name]], name)
+}
+```
+
+### Leave-One-Out Cross-Validation - New Data Frame Model
+
+```{r}
+# Set a seed for reproducibility
+set.seed(123)
+
+# Ensure the target variable is treated as a factor for classification
+kidney_data_expand$target <- as.factor(kidney_data_expand$target)
+
+# Rename target levels manually
+levels(kidney_data_expand$target) <- c("Class0", "Class1")
+
+
+# Set up training control
+train_control <- trainControl(
+  method = "LOOCV",
+  number = 10,
+  classProbs = TRUE,  
+  summaryFunction = twoClassSummary,  
+  savePredictions = "final"  
+)
+
+# Define a list of models to train with updated metric for optimization
+kidney_models_new_loocv <- list(
+  logistic_new_loocv = train(target ~ ., 
+                   data = kidney_data_expand, 
+                   method = "glmnet", 
+                   preProc = c("center", "scale"),
+                   metric = "ROC",
+                   family = "binomial", 
+                   trControl = train_control),
+  
+  decision_tree_new_loocv = train(target ~ ., 
+                        data = kidney_data_expand, 
+                        method = "rpart",
+                        preProc = c("center", "scale"),
+                        metric = "ROC",
+                        trControl = train_control),
+  
+  random_forest_new_loocv = train(target ~ ., 
+                        data = kidney_data_expand, 
+                        method = "rf",
+                        preProc = c("center", "scale"),
+                        metric = "ROC",
+                        trControl = train_control),
+  
+  svm_new_loocv = train(target ~ ., 
+              data = kidney_data_expand, 
+              method = "svmRadial",
+              preProc = c("center", "scale"),
+              metric = "ROC",
+              trControl = train_control)
+)
+
+# Evaluate model
+extract_metrics <- function(model, model_name) {
+  # Extract results and predictions from the model
+  results <- model$results
+  preds <- model$pred  
+
+  # Calculate Accuracy from the predictions
+  correct_predictions <- preds$obs == preds$pred
+  accuracy <- sum(correct_predictions) / nrow(preds)
+
+  # Create a data frame with calculated metrics
+  data.frame(
+    Model = model_name,
+    Accuracy = accuracy,
+    ROC = max(results$ROC, na.rm = TRUE),
+    Sensitivity = max(results$Sens, na.rm = TRUE),
+    Specificity = max(results$Spec, na.rm = TRUE)
+  )
+}
+
+# Apply the updated extraction function
+new_loocv_metrics_df <- do.call(rbind, lapply(names(kidney_models_new_loocv), function(name) {
+  extract_metrics(kidney_models_new_loocv[[name]], name)
+}))
+
+# Print the combined metrics DataFrame
+print(new_loocv_metrics_df)
+
+```
+
+### ROC-AUC Curve - Leave-One-Out Cross-Validation - New Data Frame Model
+
+```{r}
+suppressMessages({
+
+  set.seed(123)
+  
+# Create an empty list to store ROC curve plots
+roc_plots <- list()
+
+# Loop through each model to calculate ROC curves and plot them
+for (name in names(kidney_models_new_loocv)) {
+  # Extract predictions for the current model
+  preds <- kidney_models_new_loocv[[name]]$pred
+  
+  # Calculate ROC curve using pROC
+  roc_obj <- roc(response = preds$obs, predictor = as.numeric(preds$Class1))
+
+  # Create the ROC plot using ggplot2
+  roc_plot <- ggplot(data = data.frame(
+                        TPR = roc_obj$sensitivities,
+                        FPR = roc_obj$specificities),
+                     aes(x = FPR, y = TPR)) +
+    geom_line() +
+    geom_abline(linetype = "dashed") +
+    labs(title = paste("ROC Curve for", name),
+         x = "False Positive Rate (1 - Specificity)",
+         y = "True Positive Rate (Sensitivity)") +
+    annotate("text", x = .5, y = .5, label = sprintf("AUC = %.2f", auc(roc_obj)), parse = TRUE)
+
+  # Store the plot in the list
+  roc_plots[[name]] <- roc_plot
+}
+
+# Using an invisible() wrapper to suppress automatic output
+invisible(lapply(roc_plots, print))
+})
+```
+
+### Variable Importance - Leave-One-Out Cross-Validation - New Data Frame Model
+
+```{r}
+# Function to calculate and plot variable importance
+plot_variable_importance <- function(model, model_name) {
+  # Calculate variable importance
+  var_imp <- varImp(model, scale = FALSE)
+
+  # Plot the top 5 important variables
+  plot_obj <- plot(var_imp, top = 5, main = paste("Variable Importance for", model_name))
+  
+  # Explicitly print the plot object
+  print(plot_obj)
+}
+
+
+# Loop through each model in the list and plot variable importance
+for (name in names(kidney_models_new_loocv)) {
+  plot_variable_importance(kidney_models_new_loocv[[name]], name)
+}
+```
+
+
+
+## Evaluation Results  
+
+Based on the provided evaluation metrics for the various models developed with both the original and new datasets using cross-validation and leave-one-out cross-validation (LOOCV), our analysis leads us to several insights and recommendations.
+
+For accuracy, the Support Vector Machine (SVM) trained on the original data with cross-validation (svm_Orig_cv) has performed the best with a score of 0.8101. This suggests robust general performance in classifying the target variable.
+
+However, when considering the Receiver Operating Characteristic (ROC) curve area, which assesses the trade-off between true positive rate and false positive rate, the logistic regression model trained on the new data with cross-validation (logistic_new_cv) leads with a ROC of 0.8554. This indicates a superior capability in distinguishing between the classes compared to other models.
+
+Sensitivity, which measures the model's ability to correctly identify true positives, is highest in the decision tree models (both original and new data) at 0.9350. This suggests that decision trees are particularly effective in identifying the positive class but should be considered in the context of their specificity scores.
+
+In terms of specificity, which measures the true negative rate, the logistic regression model on the original data using cross-validation (logistic_Orig_cv) and the random forest on the original data using cross-validation (random_forest_Orig_cv) both have the highest score at 0.7417. This indicates these models' strengths in correctly identifying negative cases.
+
+Considering the balance between all these metrics, the logistic models, particularly logistic_new_cv, exhibit a strong balance between ROC and other performance metrics. They show strong ability not only in general accuracy but also in maintaining a high ROC, making them excellent candidates for scenarios where both classes are equally important.
+
+Given these insights, we recommend further development and tuning of the logistic regression models, especially on the new dataset using cross-validation. It would be beneficial to explore feature engineering, hyperparameter tuning, and potentially ensemble methods that might blend the strengths of decision trees and logistic regression for even better performance.
+
+In conclusion, while the decision tree models have high sensitivity, their lower specificity and overall ROC suggest that logistic regression, especially logistic_new_cv, might be the best model to deploy for balanced performance across all evaluated metrics. We should proceed by focusing on refining this model further and evaluating it on a separate test set to confirm these results in a real-world scenario.
+
+## Variable Importance Observations
+
+The importance scores across different models and data setups give us a comprehensive insight into which features are most influential in predicting kidney-related outcomes. This analysis helps us in deciding which models to focus on and how to potentially improve them.
+
+From the tables, it is evident that the feature 'calc' consistently ranks as the most important across almost all models and data frames. This feature's high scores, particularly in decision trees and random forests, suggest its strong discriminative power in classification tasks. Both decision tree models (original and new data) rate 'calc' with importance scores above 20, indicating its pivotal role in decision-making within these models. Such consistency across various training scenarios underlines 'calc' as a critical predictor.
+
+Gravity also shows substantial importance, particularly in logistic regression models on new data, where its importance increases slightly compared to the original data setups. This might suggest that transformations or expansions in the new data frame capture the effect of 'gravity' more effectively.
+
+Looking at the different models, logistic regression models on both original and new data frames emphasize similar features but with varying importance. For instance, 'urea' and 'cond' are significant in all logistic regression setups but are less prominent in the SVM models. The SVM models, notably stable across validation methods, highlight 'calc' and 'gravity' as the top features, albeit with lower scores than seen in tree-based models.
+
+Random forest models show a broader distribution of feature importance, with 'calc' leading but 'osmo_to_cond_ratio', 'gravity', and 'urea' also featuring significantly. This spread in feature importance in random forests might indicate a more complex interaction between features compared to other models.
+
+The engineered features like 'max_agg_calc_ph', 'osmo_to_cond_ratio', and 'mean_agg_calc_ph' show meaningful importance in new data scenarios, particularly in logistic regression and random forest models. Their presence underscores the potential benefit of these engineered features in enhancing model sensitivity to nuances in the data.
+
+Given these observations, we should consider the following steps:
+
+1.  **Feature Focus**: Continue leveraging 'calc', 'gravity', and 'urea' as key features, given their consistent importance across models. Reassess the utility of less impactful or inconsistent features in simplifying the models without sacrificing performance.
+
+2.  **Model Refinement**: Further refine models where 'calc' plays a significant role, such as decision trees and random forests, to exploit this feature's strong predictive power fully.
+
+3.  **Data Expansion**: Explore additional engineered features or transformations on existing important variables to potentially uncover more subtle relationships within the data.
+
+4.  **Cross-Validation and Testing**: Continue using cross-validation methods to evaluate these models comprehensively, ensuring they generalize well on unseen data.
+
+By focusing on the most influential features and refining our models accordingly, we can enhance the predictive accuracy and reliability of our classifiers, ultimately leading to better decision-making in clinical settings.
